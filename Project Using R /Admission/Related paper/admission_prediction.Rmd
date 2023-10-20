@@ -1,0 +1,96 @@
+---
+title: "Admission_prediction"
+author: "Sabrina Mobassirin"
+date: "2023-09-24"
+output: pdf_document
+---
+
+```{r}
+library(ggplot2)
+library(kableExtra)
+library(dplyr)
+library(caTools)
+
+
+```
+
+
+```{r}
+#EDA
+#Dataset consists of 400 observations and 8 features.
+
+# data load and remove serual no.
+graduate <- read.csv("~/Downloads/Fall23/Stat5301_Applied Regression/Project/Admission/Admission_Predict.csv") %>% dplyr::select(-Serial.No.)
+# data overview
+glimpse(graduate)
+## Rows: 400
+```
+
+```{r}
+#Change the column name
+
+names(graduate)[1] <- "GRE_Score"
+names(graduate)[2] <- "TOEFL_Score" 
+names(graduate)[3] <- "University_Rating" 
+names(graduate)[8] <- "Admission_Chance"
+#Checking for null values.
+
+# null value check
+graduate[!complete.cases(graduate),]
+
+#to see relationship between variables
+plot(graduate, col="lightblue")
+```
+```{r}
+library(ggplot2)
+library(GGally)
+ggpairs(graduate,lower = list(continuous = wrap('points', colour = "purple")),
+  diag = list(continuous = wrap("barDiag", colour = "violet"))
+    )
+
+```
+The above plot shows high positive co-relation with GRE score, TOEFL score and CGPA the high chance of getting admission.
+
+```{r}
+set.seed(2)
+
+sample = sample.split(graduate$Admission_Chance, SplitRatio = 0.70)
+
+train = subset(graduate, sample == TRUE)
+test = subset(graduate, sample == FALSE)
+
+print(dim(train))
+
+print(dim(test))
+```
+
+Model building
+We will make the multiple linear regression modeing using Chance of Admit as the target variable. We will include all the independent variable.
+```{r}
+model_mlr <- lm(Admission_Chance ~ ., data = graduate)
+summary(model_mlr)
+```
+ Model showing low standard error, high R2
+ and low p-value (< 0.05). To check linearity we will see the residual analysis.
+ 
+```{r}
+hist(resid(model_mlr), col = 'skyblue', main = "Residual Disribution", xlab = "Residuals")
+```
+
+
+```{r}
+plot(model_mlr)
+```
+Above residual plot show model met the linearity assumption. So we can write the linear equation:
+AdmissionChance=−1.25+0.0017∗GREScore+0.003∗TOEFLScore+0.006∗UniversityRating+−0.003∗SOP+0.022∗LOR+0.119∗CGPA+0.024∗Research
+
+#####
+Prediction on test data
+To predict the admission chance apply this model on test data. We will add new column named Admission Probability. It shows 2 values 0 and 1, of 0 the probability of admission is less if 1 then probability of admission is high.
+
+```{r}
+Predict <- predict(model_mlr, test)
+test$Predict <- ifelse(Predict < 0.6, "0", "1")
+kable(test[1:10,]) %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),latex_options="scale_down")
+
+```

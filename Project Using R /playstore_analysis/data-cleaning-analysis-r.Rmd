@@ -1,0 +1,263 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(comment = '')
+```
+
+# Dataset information {#dataset_info}
+The dataset is about the Google Play Store applications. It shows information about the given apps, such as the type of category or the ratings of the apps, besides more information that can be used to predict behaviour, visualise information, and other interesting actions.
+The dataset can be found in Kaggle [here](https://www.kaggle.com/lava18/google-play-store-apps?select=googleplaystore.csv).
+In the following blocks, I will load the data and depict general information about the dataset.
+
+```{r echo = FALSE}
+library(rio)
+library(tidyverse)
+```
+
+```{r}
+googleplaystore <- import("../input/google-play-store-apps/googleplaystore.csv", 
+                          setclass = "tibble", 
+                          fill = TRUE)
+
+glimpse(googleplaystore)
+```
+The dataset doesn`t have row names:
+```{r}
+has_rownames(googleplaystore)
+```
+
+# Data cleaning
+In this step, I will clean the columns of the dataset. Then, I will make different decisions that will help me make different analysis tasks on the next step. Of course, these cleaning steps are one of the thousands of possibilities that can be done over this dataset. For example, some columns will be deleted (I considered that I don`t need it for this analysis), others that will be updated, mutated to different types of values, among others possibilities. To sum up, I thought this process is essential not only to get cleaner data but also to show a micro-analysis of each column and apply different R techniques.
+
+## App
+The *App column* shows the application name. Since the dataset doesnt have row names, I will transform this column into the row names in this step. The first task is to identify repeated values (this is done in the next chunk).
+```{r}
+googleplaystore %>% 
+  count(App, sort = TRUE) %>%
+  head(10)
+```
+It`s a fact that there are repeated applications. My decision is to remove the repeated ones and keep them just once (the names will be unique). Afterwards, I am setting up the row names, see below:
+```{r}
+googleplaystore <- googleplaystore %>% 
+  distinct(App, .keep_all = TRUE) %>% 
+  column_to_rownames("App")
+```
+
+## Type
+The *Type column* shows if the app is paid or free. However, the dataset can have unexpected values on it:
+```{r}
+googleplaystore %>% 
+  count(Type)
+```
+Two values are wrong, so I will remove the apps that don`t have a Type equal to Free or Paid. Since the column is categorical, I am transforming this column to a factor at the end.
+```{r}
+googleplaystore <- googleplaystore %>% 
+  filter(Type == "Free" | Type == "Paid") %>%
+  mutate(across(Type, as.factor))
+```
+
+## Category & Genres
+
+It seems *Category* and *Genres* columns are related, let`s see it below:
+```{r}
+googleplaystore %>% 
+  count(Category, Genres) %>% 
+  head(12)
+```
+Indeed, they are related. It looks like *Genres* is a subcategory of *Category*. I think *Category* is enough, so that I will drop the *Genres* for this analysis.
+```{r}
+googleplaystore <- googleplaystore %>% 
+  select(-Genres) %>%
+  mutate(across(Category, as.factor))
+```
+
+## Rating
+
+*Rating* column is numeric, but I still need to find out if they are missing values:
+```{r}
+googleplaystore %>% 
+  filter(is.na(Rating)) %>% 
+  count()
+```
+Since they are missing values, I will filter them out:
+```{r}
+googleplaystore <- googleplaystore %>% 
+  filter(!is.na(Rating))
+```
+
+## Reviews
+The *Reviews* column shows the number of reviews of the app. I will find out if they are missing values:
+```{r}
+googleplaystore %>% 
+  filter(is.na(Reviews)) %>% 
+  count()
+```
+
+There aren not missing values, so that is fine. However, for some reason, the column isn`t numeric so that I will transform it to integer type:
+```{r}
+googleplaystore <- googleplaystore %>% 
+  mutate(across(Reviews, as.integer))
+```
+
+## Price
+The *Price* column is expressed in dollars but the symbol it is present in each cell, so I will remove the $ of each cell, and then I will mutate the column to double type.
+```{r}
+googleplaystore %>% 
+  count(Price, sort = TRUE) %>%
+  head(5)
+```
+  
+I am using an external package called Stringr, which is part of Tidyverse. It was not used in the module, which was beneficial for me. That is why I decided to use it for the second part of this Project. So, to find out the citation and the characteristic of this package goes to the R Package section by clicking [here](#rpackage).
+```{r}
+# If the first character of Price is $, I am removing it
+# If the App is free, Price equal to 0, so I am leaving the 0
+# At the end I am transforming the column to double and printing the counts
+googleplaystore <- googleplaystore %>% 
+  mutate(Price = if_else(str_sub(Price, start = 1) != "0",
+                         str_sub(Price, start = 2), "0")) %>%
+  mutate(across(Price, as.double))
+
+# Show results
+googleplaystore %>% 
+  count(Price, sort = TRUE) %>%
+  head(5)
+```
+
+## Installs
+The *Installs* column shows the number of installs a given app. It is a categorical column. I will find out if they are missing values or wrong types.
+```{r}
+googleplaystore %>% 
+  count(Installs, sort = TRUE)
+```
+
+It seems that everything is fine, so I will end up transforming the column into intenger. 
+```{r}
+googleplaystore %<>% 
+  mutate(Installs = str_sub(Installs, 0, str_length(Installs) - 1))  %>%
+  mutate(Installs = str_replace_all(Installs, ',', '')) %>%
+  mutate(across(Installs, as.integer))
+```
+
+## Remove undesired columns
+There are columns that I won`t use, I believe they are not necessary for the analysis I have in mind. So, it is better to drop them out to improve the performance of the analysis.
+```{r}
+googleplaystore <- googleplaystore %>%
+  select(-c(Size, `Content Rating`, `Last Updated`, `Current Ver`, `Android Ver`))
+```
+
+## Final results
+After all the previous steps, the dataset changed a lot. Therefore, I believe it is good to show how it looks now (it can be compared to how it looked in the [beginning](#dataset_info)). Now, I am ready to start the analysis :)
+```{r}
+glimpse(googleplaystore)
+```
+
+# Data Analysis
+There are a bunch of possible visualisations over the current data. I will try to perform some simple analysis, and then, continue with some that I believe are more advanced, because they contain two or more features. I will use ggplot2 to show the results, using the type of graphs that I am confident are more suitable for each case. Finally, I will try to explain the results for each case.
+
+## Type distribution {#type_distribution}
+The graph below shows the distribution of the *Type* column. It is a fact that most of the given apps are Free. However, just 7.4% of the apps of the dataset are paid.
+```{r fig.width=6, fig.height=3, fig.align='center', fig.show='hold'}
+googleplaystore %>% 
+  count(Type) %>%
+  ggplot(aes(x="", y=n, fill=Type)) +
+  geom_bar(stat="identity", width=1, color="white") +
+  coord_polar("y", start=1.2) +
+  theme_void() +
+  geom_text(aes(label = paste(round(n * 100 / nrow(googleplaystore), 1), "%")),
+            position = position_stack(vjust = 0.5), color="white") +
+  scale_fill_manual(values=c("darkgreen", "darkred"))
+```
+
+## Rating distribution {#rating_distribution}
+The graph below shows the distribution of the column *Rating*. It depicts that most of the given apps have a great rating, between 4.0 ~ 4.9.
+I will try to go deeper in further graphs to understand if this is related to another feature. Besides, it could be interesting to understand what happened with the rest of the ratings, why there are few low ratings, for example, people do not waste time rating useless apps? or maybe those 'bad' apps are too expensive? there are different possibilities to research.
+```{r fig.width=8, fig.height=4, fig.align='center', fig.show='hold'}
+ggplot(googleplaystore, aes(Rating)) +
+  geom_histogram(bins = 5, fill = "#011f4b") +
+  ggtitle("Rating Distribution") +
+  labs(y = "Count") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+## Top 3
+\
+I believe it is interesting to see the applications with the highest ratings. However, some applications have high ratings, but just a few installs. 
+So, I am filtering the applications with at least 50000 installs.
+```{r}
+googleplaystore %>%
+  filter(Installs >= 50000) %>%
+  arrange(desc(Rating), desc(Installs)) %>%
+  select(Rating, Installs) %>%
+  head(3)
+```
+Moreover, the three apps with the highest amount of reviews:
+```{r}
+googleplaystore %>%
+  arrange(desc(Reviews)) %>%
+  select(Reviews) %>%
+  head(3)
+```
+Finally, the three most expensive apps. Since the third one presents an emoji, I am stripping out it using stringr.
+```{r}
+most_expensive <- googleplaystore %>%
+  arrange(desc(Price)) %>%
+  select(Price) %>%
+  head(3) %>%
+  rownames_to_column(var = "App")
+
+most_expensive$App <- str_replace_all(most_expensive$App, "[^[A-Za-z'-]]", " ")
+most_expensive
+```
+
+## Reviews vs Installs
+I wanted to show the total sum of installs and reviews. Since there are so many applications, I thought it could be better to have a threshold of reviews (to filter those apps with a lot of installs but just a few reviews, for example), in this case, 1M reviews. Finally, I grouped the results by category, to understand which ones are the predominant ones. For example, the games and communications apps have the most reviews and installs. See below:
+```{r fig.width=12, fig.height=9}
+installs_reviews_over_million <- googleplaystore %>%
+  filter(Reviews >= 1000000) %>%
+  select(Category, Installs, Reviews) %>%
+  group_by(Category) %>%
+  summarise(`Installs` = sum(Installs) / 1000000, 
+            `Reviews` = sum(Reviews) / 1000000) %>%
+  unique()
+
+# Using pivot to have in one column installs and reviews
+# Allowing me to create a multi barplot later
+pir <- pivot_longer(installs_reviews_over_million, 
+                    -Category, 
+                    names_to="Variable", 
+                    values_to="Sum")
+
+ggplot(pir, aes(x = reorder(Category, Sum), y = Sum)) + 
+    geom_bar(aes(fill = Variable), stat = "identity", position = "dodge") +
+    labs(x = "Category", 
+         y = "Totals (in millions)", 
+         fill = "", 
+         title = "Sum of Reviews vs Sum of Installs by Category") +
+    coord_flip() +
+    scale_y_continuous(breaks = seq(0, 10000, 1000)) +
+    theme(axis.text=element_text(size=13), 
+          axis.title = element_text(size=18, lineheight = 600),
+          title = element_text(size = 22, lineheight = 600),
+          plot.title = element_text(hjust = 0.5),
+          legend.text = element_text(size=18, lineheight = 400))
+```
+
+## Rating vs Category
+In this case, I used the category too to group the applications. I wanted to show how behaves the rating among the applications. As shown [before](#rating_distribution), most ratings vacillate around 3.5~4.5. However, I didn't show the rating against the category there.  
+So, I am confident that I am getting a more complex view of the data frame. To add more value, I filtered the applications with a price lower or equal to $50 (since most of the applications are free - check out [here](#type_distribution)).
+```{r fig.width=12, fig.height=9}
+googleplaystore %>% 
+  filter(Price <= 50) %>%
+  select(Category, Rating) %>%
+  group_by(Category) %>%
+  summarise(`Mean Rating` = mean(Rating)) %>%
+  ggplot(aes(x = reorder(Category, `Mean Rating`), y = `Mean Rating`)) + 
+  geom_bar(stat = "identity", position = "dodge", fill = "#011f4b", width = 0.8) +
+  labs(x = "Category", title = "Applications' price up to $50") +
+  scale_y_continuous(breaks = seq(0, 5, 0.2)) +
+  coord_flip() +
+  theme(axis.text=element_text(size=13), 
+        axis.title = element_text(size=18, lineheight = 600),
+        title = element_text(size = 22, lineheight = 600),
+        plot.title = element_text(hjust = 0.5))
+```

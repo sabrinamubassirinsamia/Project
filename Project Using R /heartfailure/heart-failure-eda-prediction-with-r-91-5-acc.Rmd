@@ -1,0 +1,1083 @@
+---
+title: "Heart Failure❣️ EDA & Prediction with R"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true               # Table of Contents
+    number_sections: true
+    fig_caption: true
+    fig_width: 8
+    fig_height: 5
+    df_print: paged
+    code_folding: hide
+    highlight: tango
+    theme: cosmo
+---
+
+```{r setup, echo=FALSE, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, error=FALSE)
+knitr::opts_chunk$set(out.width="100%", fig.height = 5, split=FALSE, fig.align = "default")
+options(dplyr.summarise.inform = FALSE)
+```
+
+![Cardiovascular diseases (CVDs)](https://i.imgur.com/wC22WgL.jpeg)
+
+# Introduction
+
+We are going to predict mortality by heart failure based on the 12 features included in the data set. 
+This can be used to help hospitals in assessing the severity of patients with cardiovascular diseases (CVDs).<br>
+<font color="RoyalBlue">データセットに含まれる12の特徴量に基づいて心不全による死亡率を予測していきます。
+この予測は、病院で心血管疾患（CVDs）患者の重症度を評価する際に役立てられるでしょう。</font>  
+
+I have also run a similar analysis in Python ([Heart Failure❣️ EDA & Prediction (92%acc, 86%F1)](https://www.kaggle.com/snowpea8/heart-failure-eda-prediction-92-acc-86-f1)), 
+if you would like to take a look at it.<br>
+<font color="RoyalBlue">同様の分析を Python でも実行していますので、そちらも参考にしてください。</font>  
+  
+In this notebook, we will first discover and visualize the data to gain insights. 
+Then we split the data into a training and a test set and use the training set to train various algorithms. 
+Finally, we compare the accuracy and recall of each prediction.<br>
+<font color="RoyalBlue">このノートブックでは、まず洞察を得るためにデータを研究、可視化します。  
+それからデータを訓練用とテスト用に分割し、訓練セットを使って様々なアルゴリズムにより予測・分析を行います。  
+最後に、それぞれの予測による精度と再現率を比較します。</font>
+
+# Setup {.tabset .tabset-fade .tabset-pills}
+
+## Load libraries
+```{r, message = FALSE}
+library(tidyverse)
+library(skimr)      # skimming data frames
+library(ggthemes)
+library(patchwork)  # combine separate ggplots into the same graphic
+library(corrplot)
+
+library(rsample)    # initial_split()
+library(DescTools)  # PseudoR2()
+library(sjPlot)     # tab_model(), print regression models as HTML table
+library(caret)      # confusionMatrix()
+library(mlr)        # Machine Learning in R (for SVM)
+library(rpart)      # Recursive Partitioning and Regression Trees
+library(rpart.plot)
+library(ranger)     # Random forest
+library(lightgbm)   # LightGBM (GBDT: gradient boosting decision tree)
+```
+
+## Load data
+```{r results=FALSE, warning=FALSE, message=FALSE}
+ROOT = "../input/heart-failure-clinical-data"
+palette_ro = c("#ee2f35", "#fa7211", "#fbd600", "#75c731", "#1fb86e", "#0488cf", "#7b44ab")
+
+df <- read_csv(str_c(ROOT, "/heart_failure_clinical_records_dataset.csv"))
+```
+
+# Check data {.tabset .tabset-fade .tabset-pills}
+Dataset from: [Machine learning can predict survival of patients with heart failure from serum creatinine and ejection fraction alone](https://bmcmedinformdecismak.biomedcentral.com/articles/10.1186/s12911-020-1023-5)
+
+## Dataset
+```{r}
+head(df, 50) %>% 
+  DT::datatable()
+```
+
+## Explanation of variables
+* `age` - Age
+* `anaemia` - Decrease of red blood cells or hemoglobin (boolean) (0:`False`, 1:`True`)
+<br>　<font color="RoyalBlue">貧血 - 赤血球またはヘモグロビンの減少が起こっているか</font>
+* `creatinine_phosphokinase` - Level of the CPK enzyme in the blood (mcg/L)
+<br>　<font color="RoyalBlue">クレアチンフォスフォキナーゼ - 血中 CPK 酵素（筋肉細胞のエネルギー代謝に重要な役割を果たす酵素）のレベル（μg/L）</font>
+* `diabetes` - If the patient has diabetes (boolean) (0:`False`, 1:`True`)
+<br>　<font color="RoyalBlue">糖尿病 - 患者が糖尿病かどうか</font>
+* `ejection_fraction` - Percentage of blood leaving the heart at each contraction (percentage)
+<br>　<font color="RoyalBlue">駆出率 - 心拍ごとに心臓が送り出す血液量（駆出量）／心臓が拡張したときの左心室容量（％）
+<br>　（※　元論文で重要視）</font>
+* `high_blood_pressure` - If the patient has hypertension (boolean) (0:`False`, 1:`True`)
+<br>　<font color="RoyalBlue">高血圧 - 患者が高血圧かどうか</font>
+* `platelets` - Platelets in the blood (kiloplatelets/mL)
+<font color="RoyalBlue">血小板数 - 血中の血小板数（千／mL）</font>
+* `serum_creatinine` - Level of serum creatinine in the blood (mg/dL)
+<br>　<font color="RoyalBlue">血清クレアチニン値 - 血中の血清クレアチニン（腎臓の糸球体から排泄される）のレベル（mg/dL）
+<br>　（※　元論文で重要視）</font>
+* `serum_sodium` - Level of serum sodium in the blood (mEq/L)
+<br>　<font color="RoyalBlue">血清ナトリウム値 - 血中の血清ナトリウム値のレベル（mEq/L）</font>
+* `sex` - Woman or man (binary) (0: Woman, 1: Man)
+* `smoking` - If the patient smokes or not (boolean) (0:`False`, 1:`True`)
+* `time` - Follow-up period (days)
+<br>　<font color="RoyalBlue">時間 - 患者の経過観察期間（日）</font>
+* `DEATH_EVENT` - If the patient deceased during the follow-up period (boolean)
+<br>　<font color="RoyalBlue">死亡 - 経過観察期間中に患者が死亡したかどうか</font>
+
+## Data size and structure
+```{r}
+glimpse(df)
+```
+
+## Data summary
+```{r}
+skim(df)
+```
+
+# Data visualizations
+We will change data type to make it easier to handle in future work.<br>
+<font color="RoyalBlue">今後の作業で扱いやすいように、データの型を変更したものを用意しておきます。</font>
+
+```{r class.source="fold-show"}
+f_features = c("anaemia", "diabetes", "high_blood_pressure", "sex", "smoking", "DEATH_EVENT")
+
+df_n <- df
+df <- df %>%
+  mutate_at(f_features, as.factor)
+```
+
+## Distribution of the binary features {.tabset .tabset-fade .tabset-pills}
+
+### Features vs target (count)
+```{r fig.cap="Fig. 1", fig.height=5}
+p1 <- ggplot(df, aes(x = anaemia, fill = DEATH_EVENT)) +
+  geom_bar(stat = "count", position = "stack", show.legend = FALSE) +
+  scale_x_discrete(labels  = c("0 (False)", "1 (True)"))+
+  scale_fill_manual(values = c(palette_ro[2], palette_ro[7]),
+                    name = "DEATH_EVENT",
+                    labels = c("0 (False)", "1 (True)")) +
+  labs(x = "Anaemia") +
+  theme_minimal(base_size = 12) +
+  geom_label(stat = "count", aes(label = ..count..), position = position_stack(vjust = 0.5),
+             size = 5, show.legend = FALSE)
+
+p2 <- ggplot(df, aes(x = diabetes, fill = DEATH_EVENT)) +
+  geom_bar(stat = "count", position = "stack", show.legend = FALSE) +
+  scale_x_discrete(labels  = c("0 (False)", "1 (True)")) +
+  scale_fill_manual(values = c(palette_ro[2], palette_ro[7]),
+                    name = "DEATH_EVENT",
+                    labels = c("0 (False)", "1 (True)")) +
+  labs(x = "Diabetes") +
+  theme_minimal(base_size = 12) +
+  geom_label(stat = "count", aes(label = ..count..), position = position_stack(vjust = 0.5),
+             size = 5, show.legend = FALSE)
+
+p3 <- ggplot(df, aes(x = high_blood_pressure, fill = DEATH_EVENT)) +
+  geom_bar(stat = "count", position = "stack", show.legend = FALSE) +
+  scale_x_discrete(labels  = c("0 (False)", "1 (True)")) +
+  scale_fill_manual(values = c(palette_ro[2], palette_ro[7]),
+                    name = "DEATH_EVENT",
+                    labels = c("0 (False)", "1 (True)")) +
+  labs(x = "High blood pressure") +
+  theme_minimal(base_size = 12) +
+  geom_label(stat = "count", aes(label = ..count..), position = position_stack(vjust = 0.5),
+             size = 5, show.legend = FALSE)
+
+p4 <- ggplot(df, aes(x = sex, fill = DEATH_EVENT)) +
+  geom_bar(stat = "count", position = "stack", show.legend = FALSE) +
+  scale_x_discrete(labels  = c("0 (Female)", "1 (Male)")) +
+  scale_fill_manual(values = c(palette_ro[2], palette_ro[7]),
+                    name = "DEATH_EVENT",
+                    labels = c("0 (False)", "1 (True)")) +
+  labs(x = "Sex") +
+  theme_minimal(base_size = 12) +
+  geom_label(stat = "count", aes(label = ..count..), position = position_stack(vjust = 0.5),
+             size = 5, show.legend = FALSE)
+
+p5 <- ggplot(df, aes(x = smoking, fill = DEATH_EVENT)) +
+  geom_bar(stat = "count", position = "stack", show.legend = FALSE) +
+  scale_x_discrete(labels  = c("0 (False)", "1 (True)")) +
+  scale_fill_manual(values = c(palette_ro[2], palette_ro[7]),
+                    name = "DEATH_EVENT",
+                    labels = c("0 (False)", "1 (True)")) +
+  labs(x = "Smoking") +
+  theme_minimal(base_size = 12) +
+  geom_label(stat = "count", aes(label = ..count..), position = position_stack(vjust = 0.5),
+             size = 5, show.legend = FALSE)
+
+p6 <- ggplot(df, aes(x = DEATH_EVENT, fill = DEATH_EVENT)) +
+  geom_bar(stat = "count", position = "stack", show.legend = TRUE) +
+  scale_x_discrete(labels  = c("0 (False)", "1 (True)")) +
+  scale_fill_manual(values = c(palette_ro[2], palette_ro[7]),
+                    name = "DEATH_EVENT",
+                    labels = c("0 (False)", "1 (True)")) +
+  labs(x = "DEATH_EVENT") +
+  theme_minimal(base_size = 12) +
+  geom_label(stat = "count", aes(label = ..count..), position = position_stack(vjust = 0.5),
+             size = 5, show.legend = FALSE)
+
+((p1 + p2 + p3) / (p4 + p5 + p6)) +
+  plot_annotation(title = "Distribution of the binary features and DEATH_EVENT")
+```
+
+Insights:
+
+* The distribution of the objective variable is not 1:1, but is biased.
+<br>　<font color="RoyalBlue">目的変数の分布は１：１ではなく、偏りがある。</font>
+
+
+### Features vs target (percentage)
+```{r fig.cap="Fig. 2", fig.height=5}
+p1 <- ggplot(df, aes(y = reorder(anaemia, as.numeric(anaemia) * -1), fill = DEATH_EVENT)) +
+  geom_bar(position = "fill", show.legend = FALSE) + 
+  scale_y_discrete(labels  = c("1 (True)", "0 (False)"))+
+  scale_fill_manual(values = c(palette_ro[2], palette_ro[7]),
+                    name = "DEATH_EVENT",
+                    labels = c("0 (False)", "1 (True)")) +
+  labs(subtitle = "Anaemia") +
+  theme_minimal(base_size = 12) +
+  theme(axis.title = element_blank(), axis.text.x = element_blank())
+
+p2 <- ggplot(df, aes(y = reorder(diabetes, as.numeric(diabetes) * -1), fill = DEATH_EVENT)) +
+  geom_bar(position = "fill", show.legend = FALSE) + 
+  scale_y_discrete(labels  = c("1 (True)", "0 (False)"))+
+  scale_fill_manual(values = c(palette_ro[2], palette_ro[7]),
+                    name = "DEATH_EVENT",
+                    labels = c("0 (False)", "1 (True)")) +
+  labs(subtitle = "Diabetes") +
+  theme_minimal(base_size = 12) +
+  theme(axis.title = element_blank(), axis.text.x = element_blank())
+
+p3 <- ggplot(df, aes(y = reorder(high_blood_pressure, as.numeric(high_blood_pressure) * -1), fill = DEATH_EVENT)) +
+  geom_bar(position = "fill", show.legend = FALSE) + 
+  scale_y_discrete(labels  = c("1 (True)", "0 (False)"))+
+  scale_fill_manual(values = c(palette_ro[2], palette_ro[7]),
+                    name = "DEATH_EVENT",
+                    labels = c("0 (False)", "1 (True)")) +
+  labs(subtitle = "High blood pressure") +
+  theme_minimal(base_size = 12) +
+  theme(axis.title = element_blank(), axis.text.x = element_blank())
+
+p4 <- ggplot(df, aes(y = reorder(sex, as.numeric(sex) * -1), fill = DEATH_EVENT)) +
+  geom_bar(position = "fill", show.legend = FALSE) + 
+  scale_y_discrete(labels  = c("1 (Male)", "0 (Female)"))+
+  scale_fill_manual(values = c(palette_ro[2], palette_ro[7]),
+                    name = "DEATH_EVENT",
+                    labels = c("0 (False)", "1 (True)")) +
+  labs(subtitle = "Sex") +
+  theme_minimal(base_size = 12) +
+  theme(axis.title = element_blank(), axis.text.x = element_blank())
+
+p5 <- ggplot(df, aes(y = reorder(smoking, as.numeric(smoking) * -1), fill = DEATH_EVENT)) +
+  geom_bar(position = "fill", show.legend = TRUE) + 
+  scale_y_discrete(labels  = c("1 (True)", "0 (False)"))+
+  scale_fill_manual(values = c(palette_ro[2], palette_ro[7]),
+                    name = "DEATH_EVENT",
+                    labels = c("0 (False)", "1 (True)")) +
+  labs(subtitle = "Smoking") +
+  theme_minimal(base_size = 12) +
+  theme(axis.title = element_blank(), legend.position = "bottom", legend.direction = "horizontal") +
+  guides(fill = guide_legend(reverse = TRUE))
+
+(p1 + p2 + p3 + p4 + p5 + plot_layout(ncol = 1)) +
+  plot_annotation(title = "Distribution of the binary features and DEATH_EVENT")
+```
+
+Insights:
+
+* For diabetes, sex, and smoking, there was little difference in the distribution of the objective variable.
+<br>　<font color="RoyalBlue">diabetes, sex, smoking においては、目的変数の分布にほとんど差は見られない。</font>
+* For anaemia and high_blood_pressure, there are some differences in the distributions of the objective variables, but we do not know if we can say that the differences are significant.
+<br>　<font color="RoyalBlue">anaemia, high_blood_pressure においては、目的変数の分布に多少の差があるが、有意な差があると言えるかどうかは分からない。</font>
+
+## Distribution of the numeric features {.tabset .tabset-fade .tabset-pills}
+
+The median is indicated by a vertical dashed line.  
+<font color="RoyalBlue">中央値には縦の破線を入れています。</font>  
+
+### Age
+```{r fig.cap="Fig. 3", out.width="90%", fig.height=9}
+p1 <- ggplot(df, aes(x = age)) + 
+  geom_histogram(binwidth = 5, colour = "white", fill = palette_ro[6], alpha = 0.5) +
+  geom_density(eval(bquote(aes(y = ..count.. * 5))), colour = palette_ro[6], fill = palette_ro[6], alpha = 0.25) +
+    # 5 is binwidth of geom_histogram()
+    # binwidth can be calculated from "diff(range(df$age))/20"
+  scale_x_continuous(breaks = seq(40, 100, 10)) +
+  geom_vline(xintercept = median(df$age), linetype="longdash", colour = palette_ro[6]) +
+  annotate(geom = "text",
+           x = max(df$age)-5, y = 50,
+           label = str_c("Min.     : ", min(df$age),
+                         "\nMedian : ", median(df$age),
+                         "\nMean    : ", round(mean(df$age), 1),
+                         "\nMax.    : ", max(df$age))) +
+  labs(title = "age distribution") +
+  theme_minimal(base_size = 12)
+
+p2 <- ggplot(df, aes(x = age, fill = DEATH_EVENT)) + 
+  # geom_histogram(aes(y=..density..), binwidth = 5, colour = "white", position = "identity", alpha = 0.5) +
+  geom_density(alpha = 0.64) +
+  scale_fill_manual(values = c(palette_ro[2], palette_ro[7]),
+                    name = "DEATH_EVENT",
+                    labels = c("0 (False)", "1 (True)")) +
+  scale_x_continuous(breaks = seq(40, 100, 10)) +
+
+  geom_vline(xintercept = median(filter(df, DEATH_EVENT == 0)$age), linetype="longdash", colour = palette_ro[2]) +
+  geom_vline(xintercept = median(filter(df, DEATH_EVENT == 1)$age), linetype="longdash", colour = palette_ro[7]) +
+  annotate(geom = "text",
+           x = max(df$age)-10, y = 0.03,
+           label = str_c("Survived median: ", median(filter(df, DEATH_EVENT == 0)$age),
+                         "\nDead median: ", median(filter(df, DEATH_EVENT == 1)$age))) +
+
+  labs(title = "Relationship between age and DEATH_EVENT") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom", legend.direction = "horizontal")
+
+p1 / p2
+```
+
+Insights:
+
+* The age of patients was highest around 60 years old, and the number of patients decreased in a bell-shaped pattern around that age.
+<br>　<font color="RoyalBlue">患者の年齢は60歳付近が最も多く、そこを中心に釣鐘状に減少している。</font>
+* There is a difference in the distribution of each objective variable, with the younger the age, the more difficult it is to die; the probability density reverses after the age of just under 70.
+<br>　<font color="RoyalBlue">目的変数別に見ると分布に差があり、年齢が若いほど死亡しづらい傾向にある。70歳弱を境に確率密度が逆転する。</font>
+
+### Creatinine phosphokinase
+```{r fig.cap="Fig. 4", out.width="90%", fig.height=13}
+p1 <- ggplot(df, aes(x = creatinine_phosphokinase)) + 
+  geom_histogram(binwidth = 100, colour = "white", fill = palette_ro[6], alpha = 0.5) +
+  geom_density(eval(bquote(aes(y = ..count.. * 100))), colour = palette_ro[6], fill = palette_ro[6], alpha = 0.25) +
+  geom_vline(xintercept = median(df$creatinine_phosphokinase), linetype="longdash", colour = palette_ro[6]) +
+  annotate(geom = "text",
+           x = max(df$creatinine_phosphokinase)-1000, y = 75,
+           label = str_c("Min.     : ", min(df$creatinine_phosphokinase),
+                         "\nMedian : ", median(df$creatinine_phosphokinase),
+                         "\nMean    : ", round(mean(df$creatinine_phosphokinase), 1),
+                         "\nMax.    : ", max(df$creatinine_phosphokinase))) +
+  labs(title = "creatinine_phosphokinase distribution") +
+  theme_minimal(base_size = 12)
+
+p2 <- ggplot(df, aes(x = creatinine_phosphokinase, fill = DEATH_EVENT)) +
+  # geom_histogram(binwidth = 100, colour = "white", position = "identity", alpha = 0.5) +
+  # geom_density(eval(bquote(aes(y = ..count.. * 100))), alpha = 0.25) +
+  geom_density(alpha = 0.64) +
+  scale_fill_manual(values = c(palette_ro[2], palette_ro[7]),
+                    name = "DEATH_EVENT",
+                    labels = c("0 (False)", "1 (True)")) +
+
+  geom_vline(xintercept = median(filter(df, DEATH_EVENT == 0)$creatinine_phosphokinase), linetype="longdash", colour = palette_ro[2]) +
+  geom_vline(xintercept = median(filter(df, DEATH_EVENT == 1)$creatinine_phosphokinase), linetype="longdash", colour = palette_ro[7]) +
+  annotate(geom = "text",
+           x = max(df$creatinine_phosphokinase)-1400, y = 0.0015,
+           label = str_c("Survived Median: ", median(filter(df, DEATH_EVENT == 0)$creatinine_phosphokinase),
+                         "\nDead Median: ", median(filter(df, DEATH_EVENT == 1)$creatinine_phosphokinase))) +
+
+  labs(title = "Relationship between creatinine_phosphokinase and DEATH_EVENT") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom", legend.direction = "horizontal")
+
+p3 <- ggplot(df, aes(x = creatinine_phosphokinase, fill = DEATH_EVENT)) +
+  geom_density(alpha = 0.64) +
+  scale_fill_manual(values = c(palette_ro[2], palette_ro[7]),
+                    name = "DEATH_EVENT",
+                    labels = c("0 (False)", "1 (True)")) +
+
+  geom_vline(xintercept = median(filter(df, DEATH_EVENT == 0)$creatinine_phosphokinase), linetype="longdash", colour = palette_ro[2]) +
+  geom_vline(xintercept = median(filter(df, DEATH_EVENT == 1)$creatinine_phosphokinase), linetype="longdash", colour = palette_ro[7]) +
+  annotate(geom = "text",
+           x = max(df$creatinine_phosphokinase)-4500, y = 0.7,
+           label = str_c("Survived Median: ", median(filter(df, DEATH_EVENT == 0)$creatinine_phosphokinase),
+                         "\nDead Median: ", median(filter(df, DEATH_EVENT == 1)$creatinine_phosphokinase))) +
+
+  labs(title = "Relationship between creatinine_phosphokinase and DEATH_EVENT (log scale)") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom", legend.direction = "horizontal") +
+  scale_x_log10() +
+  annotation_logticks()
+
+p1 / p2 / p3
+
+```
+
+Insights:
+
+* The distribution is heavily skewed to one side, with the highest value more than 30 times the median.
+<br>　<font color="RoyalBlue">片側に裾の重い分布となっており、最高で中央値の30倍以上の値を持つケースがある。</font>
+* By objective variable, there is little difference in the median, although there are some differences in the distribution.
+<br>　<font color="RoyalBlue">目的変数別に見ると、分布に多少の違いはあれど、中央値にはほとんど差が無い。</font>
+
+### Ejection fraction
+```{r fig.cap="Fig. 5", out.width="90%", fig.height=9}
+p1 <- ggplot(df, aes(x = ejection_fraction)) + 
+  geom_histogram(binwidth = 1, colour = "white", fill = palette_ro[6], alpha = 0.5) +
+  geom_density(eval(bquote(aes(y = ..count.. * 1))), colour = palette_ro[6], fill = palette_ro[6], alpha = 0.25) +
+  scale_x_continuous(breaks = seq(10, 80, 10)) +
+  geom_vline(xintercept = median(df$ejection_fraction), linetype="longdash", colour = palette_ro[6]) +
+  annotate(geom = "text",
+           x = max(df$ejection_fraction)-6, y = 45,
+           label = str_c("Min.     : ", min(df$ejection_fraction),
+                         "\nMedian : ", median(df$ejection_fraction),
+                         "\nMean    : ", round(mean(df$ejection_fraction), 1),
+                         "\nMax.    : ", max(df$ejection_fraction))) +
+  labs(title = "ejection_fraction distribution") +
+  theme_minimal(base_size = 12)
+
+p2 <- ggplot(df, aes(x = ejection_fraction, fill = DEATH_EVENT)) + 
+  geom_density(alpha = 0.64) +
+  scale_fill_manual(values = c(palette_ro[2], palette_ro[7]),
+                    name = "DEATH_EVENT",
+                    labels = c("0 (False)", "1 (True)")) +
+  scale_x_continuous(breaks = seq(10, 80, 10)) +
+
+  geom_vline(xintercept = median(filter(df, DEATH_EVENT == 0)$ejection_fraction), linetype="longdash", colour = palette_ro[2]) +
+  geom_vline(xintercept = median(filter(df, DEATH_EVENT == 1)$ejection_fraction), linetype="longdash", colour = palette_ro[7]) +
+  annotate(geom = "text",
+           x = max(df$age)-26, y = 0.045,
+           label = str_c("Survived Median: ", median(filter(df, DEATH_EVENT == 0)$ejection_fraction),
+                         "\nDead Median: ", median(filter(df, DEATH_EVENT == 1)$ejection_fraction))) +
+
+  labs(title = "Relationship between ejection_fraction and DEATH_EVENT") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom", legend.direction = "horizontal")
+
+p1 / p2
+```
+
+Insights:
+
+* The distribution is discrete, not continuous, with the first peak near 38 and the second peak near 60.
+<br>　<font color="RoyalBlue">連続的ではなく離散的な分布をとっている。38付近に第一の山が、60付近に第二の山がある。</font>
+* By objective variable, there are considerable differences in the shape of the distribution and in the median. Survivors are mostly located near the first and second mountains. The values of the dead are mostly around 30 and decrease slowly from there.
+<br>　<font color="RoyalBlue">目的変数別に見ると、分布の形にも中央値にもかなりの差がある。生存者は第一の山と第二の山付近に多い。死亡者の値は30付近が多く、そこから緩やかに減少していく。</font>
+
+### Platelets
+```{r fig.cap="Fig. 6", out.width="90%", fig.height=9}
+p1 <- ggplot(df, aes(x = platelets)) + 
+  geom_histogram(binwidth = 20000, colour = "white", fill = palette_ro[6], alpha = 0.5) +
+  geom_density(eval(bquote(aes(y = ..count.. * 20000))), colour = palette_ro[6], fill = palette_ro[6], alpha = 0.25) +
+  geom_vline(xintercept = median(df$platelets), linetype="longdash", colour = palette_ro[6]) +
+  annotate(geom = "text",
+           x = max(df$platelets)-100000, y = 40,
+           label = str_c("Min.     : ", min(df$platelets),
+                         "\nMedian : ", median(df$platelets),
+                         "\nMean    : ", round(mean(df$platelets), 1),
+                         "\nMax.    : ", max(df$platelets))) +
+  labs(title = "platelets distribution") +
+  theme_minimal(base_size = 12)
+
+p2 <- ggplot(df, aes(x = platelets, fill = DEATH_EVENT)) +
+  geom_density(alpha = 0.64) +
+  scale_fill_manual(values = c(palette_ro[2], palette_ro[7]),
+                    name = "DEATH_EVENT",
+                    labels = c("0 (False)", "1 (True)")) +
+
+  geom_vline(xintercept = median(filter(df, DEATH_EVENT == 0)$platelets), linetype="longdash", colour = palette_ro[2]) +
+  geom_vline(xintercept = median(filter(df, DEATH_EVENT == 1)$platelets), linetype="longdash", colour = palette_ro[7]) +
+  annotate(geom = "text",
+           x = max(df$platelets)-180000, y = 0.000005,
+           label = str_c("Survived Median: ", median(filter(df, DEATH_EVENT == 0)$platelets),
+                         "\nDead Median: ", median(filter(df, DEATH_EVENT == 1)$platelets))) +
+
+  labs(title = "Relationship between platelets and DEATH_EVENT") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom", legend.direction = "horizontal")
+
+p1 / p2
+```
+
+Insights:
+
+* The distribution is roughly symmetrical and almost bell-shaped.
+<br>　<font color="RoyalBlue">左右対称の釣鐘状に近い分布をとっている。</font>
+* By objective variable, there is little difference in the median. Survivors have slightly higher platelet counts, and the values are clustered around the median.
+<br>　<font color="RoyalBlue">目的変数別に見ると、中央値にほとんど差は無い。生存者の方が若干血小板数が多く、値が中央値付近に集まっている。</font>
+
+### Serum creatinine
+```{r fig.cap="Fig. 7", out.width="90%", fig.height=13}
+p1 <- ggplot(df, aes(x = serum_creatinine)) + 
+  geom_histogram(binwidth = 0.2, colour = "white", fill = palette_ro[6], alpha = 0.5) +
+  geom_density(eval(bquote(aes(y = ..count.. * 0.2))), colour = palette_ro[6], fill = palette_ro[6], alpha = 0.25) +
+  geom_vline(xintercept = median(df$serum_creatinine), linetype="longdash", colour = palette_ro[6]) +
+  annotate(geom = "text",
+           x = max(df$serum_creatinine)-1, y = 70,
+           label = str_c("Min.     : ", min(df$serum_creatinine),
+                         "\nMedian : ", median(df$serum_creatinine),
+                         "\nMean    : ", round(mean(df$serum_creatinine), 1),
+                         "\nMax.    : ", max(df$serum_creatinine))) +
+  labs(title = "serum_creatinine distribution") +
+  theme_minimal(base_size = 12)
+
+p2 <- ggplot(df, aes(x = serum_creatinine, fill = DEATH_EVENT)) +
+  geom_density(alpha = 0.64) +
+  scale_fill_manual(values = c(palette_ro[2], palette_ro[7]),
+                    name = "DEATH_EVENT",
+                    labels = c("0 (False)", "1 (True)")) +
+
+  geom_vline(xintercept = median(filter(df, DEATH_EVENT == 0)$serum_creatinine), linetype="longdash", colour = palette_ro[2]) +
+  geom_vline(xintercept = median(filter(df, DEATH_EVENT == 1)$serum_creatinine), linetype="longdash", colour = palette_ro[7]) +
+  annotate(geom = "text",
+           x = max(df$serum_creatinine)-1.6, y = 1.25,
+           label = str_c("Survived Median: ", median(filter(df, DEATH_EVENT == 0)$serum_creatinine),
+                         "\nDead Median: ", median(filter(df, DEATH_EVENT == 1)$serum_creatinine))) +
+
+  labs(title = "Relationship between serum_creatinine and DEATH_EVENT") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom", legend.direction = "horizontal")
+
+p3 <- ggplot(df, aes(x = serum_creatinine, fill = factor(DEATH_EVENT))) +
+  geom_density(alpha = 0.64) +
+  scale_fill_manual(values = c(palette_ro[2], palette_ro[7]),
+                    name = "DEATH_EVENT",
+                    labels = c("0 (False)", "1 (True)")) +
+
+  geom_vline(xintercept = median(filter(df, DEATH_EVENT == 0)$serum_creatinine), linetype="longdash", colour = palette_ro[2]) +
+  geom_vline(xintercept = median(filter(df, DEATH_EVENT == 1)$serum_creatinine), linetype="longdash", colour = palette_ro[7]) +
+  annotate(geom = "text",
+           x = max(df$serum_creatinine)-3.2, y = 3,
+           label = str_c("Survived Median: ", median(filter(df, DEATH_EVENT == 0)$serum_creatinine),
+                         "\nDead Median: ", median(filter(df, DEATH_EVENT == 1)$serum_creatinine))) +
+
+  labs(title = "Relationship between serum_creatinine and DEATH_EVENT (log scale)") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom", legend.direction = "horizontal") +
+  scale_x_log10()
+
+p1 / p2 / p3
+```
+
+Insights:
+
+* The distribution is heavily skewed to one side, with rare cases having values more than four times the median.
+<br>　<font color="RoyalBlue">片側に裾の重い分布となっており、稀に中央値の４倍以上の値を持つケースがある。</font>
+* By objective variable, there are considerable differences in the shape of the distribution. For survivors, the values are clustered around the median, but for the dead, there are often cases where the values exceed 1.5.
+<br>　<font color="RoyalBlue">目的変数別に見ると、分布の形にかなりの差がある。生存者は値がほぼ中央値付近に集まっているが、死亡者は1.5を超えるようなケースがしばしばある。</font>
+
+### Serum sodium
+```{r fig.cap="Fig. 8", out.width="90%", fig.height=9}
+p1 <- ggplot(df, aes(x = serum_sodium)) + 
+  geom_histogram(binwidth = 1, colour = "white", fill = palette_ro[6], alpha = 0.5) +
+  geom_density(eval(bquote(aes(y = ..count.. * 1))), colour = palette_ro[6], fill = palette_ro[6], alpha = 0.25) +
+  scale_x_continuous(breaks = seq(110, 150, 10)) +
+  geom_vline(xintercept = median(df$serum_sodium), linetype="longdash", colour = palette_ro[6]) +
+  annotate(geom = "text",
+           x = min(df$serum_sodium)+4, y = 36,
+           label = str_c("Min.     : ", min(df$serum_sodium),
+                         "\nMedian : ", median(df$serum_sodium),
+                         "\nMean    : ", round(mean(df$serum_sodium), 1),
+                         "\nMax.    : ", max(df$serum_sodium))) +
+  labs(title = "serum_sodium distribution") +
+  theme_minimal(base_size = 12)
+
+p2 <- ggplot(df, aes(x = serum_sodium, fill = DEATH_EVENT)) +
+  geom_density(alpha = 0.64) +
+  scale_fill_manual(values = c(palette_ro[2], palette_ro[7]),
+                    name = "DEATH_EVENT",
+                    labels = c("0 (False)", "1 (True)")) +
+  scale_x_continuous(breaks = seq(110, 150, 10)) +
+
+  geom_vline(xintercept = median(filter(df, DEATH_EVENT == 0)$serum_sodium), linetype="longdash", colour = palette_ro[2]) +
+  geom_vline(xintercept = median(filter(df, DEATH_EVENT == 1)$serum_sodium), linetype="longdash", colour = palette_ro[7]) +
+  annotate(geom = "text",
+           x = min(df$serum_sodium)+5, y = 0.1,
+           label = str_c("Survived Median: ", median(filter(df, DEATH_EVENT == 0)$serum_sodium),
+                         "\nDead Median: ", median(filter(df, DEATH_EVENT == 1)$serum_sodium))) +
+
+  labs(title = "Relationship between serum_sodium and DEATH_EVENT") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom", legend.direction = "horizontal")
+
+p1 / p2
+```
+
+Insights:
+
+* The distribution is roughly symmetrical and almost bell-shaped, with no value exceeding 148, but there are rare cases below 125.
+<br>　<font color="RoyalBlue">ほとんど左右対称の釣鐘型に近い分布で、148を超える値は無いが、125未満のケースは稀に存在する。</font>
+* By objective variable, there is some difference in the median and in the distribution. The values of survivors are clustered around the median, while the values of deaths are lower and tend to be more dispersed.
+<br>　<font color="RoyalBlue">目的変数別に見ると、中央値にも分布にも多少の差がある。生存者の値は中央値付近に集まっているが、死亡者の値はより低く、分散傾向にある。</font>
+
+### Time
+```{r fig.cap="Fig. 9", out.width="90%", fig.height=9}
+p1 <- ggplot(df, aes(x = time)) + 
+  geom_histogram(binwidth = 10, colour = "white", fill = palette_ro[6], alpha = 0.5) +
+  geom_density(eval(bquote(aes(y = ..count.. * 10))), colour = palette_ro[6], fill = palette_ro[6], alpha = 0.25) +
+  scale_x_continuous(breaks = seq(0, 300, 50)) +
+  geom_vline(xintercept = median(df$time), linetype="longdash", colour = palette_ro[6]) +
+  annotate(geom = "text",
+           x = max(df$time)-30, y = 22,
+           label = str_c("Min.     : ", min(df$time),
+                         "\nMedian : ", median(df$time),
+                         "\nMean    : ", round(mean(df$time), 1),
+                         "\nMax.    : ", max(df$time))) +
+  labs(title = "time distribution") +
+  theme_minimal(base_size = 12)
+
+p2 <- ggplot(df, aes(x = time, fill = DEATH_EVENT)) +
+  geom_density(alpha = 0.64) +
+  scale_fill_manual(values = c(palette_ro[2], palette_ro[7]),
+                    name = "DEATH_EVENT",
+                    labels = c("0 (False)", "1 (True)")) +
+  scale_x_continuous(breaks = seq(0, 300, 50)) +
+
+  geom_vline(xintercept = median(filter(df, DEATH_EVENT == 0)$time), linetype="longdash", colour = palette_ro[2]) +
+  geom_vline(xintercept = median(filter(df, DEATH_EVENT == 1)$time), linetype="longdash", colour = palette_ro[7]) +
+  annotate(geom = "text",
+           x = max(df$time)-50, y = 0.008,
+           label = str_c("Survived Median: ", median(filter(df, DEATH_EVENT == 0)$time),
+                         "\nDead Median: ", median(filter(df, DEATH_EVENT == 1)$time))) +
+
+  labs(title = "Relationship between time and DEATH_EVENT") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom", legend.direction = "horizontal")
+
+p1 / p2
+```
+
+Insights:
+
+* The distribution of the follow-up period is spread out with no large peaks, and there are small peaks around 90 and 200.
+<br>　<font color="RoyalBlue">経過観察期間の分布には大きな山は無くばらけていて、90付近と200付近に小さな山がある。</font>
+* By objective variable, there are clear differences in the medians and distributions. Survivors have a long follow-up period and two peaks in the distribution, while the dead tend to have a short follow-up period, with a gradual decrease from a large peak around 30 days.
+<br>　<font color="RoyalBlue">目的変数別に見ると、中央値や分布に明確な差がある。生存者は経過観察期間が長く分布に２つの山があるが、死亡者は経過観察期間が短い傾向にあり、30日付近の大きな山から緩やかに減少していく。</font>
+
+### Serum creatinine and ejection fraction
+The figure below is based on a [scatterplot from the paper](https://bmcmedinformdecismak.biomedcentral.com/articles/10.1186/s12911-020-1023-5/figures/3).
+
+```{r fig.cap="Fig. 10"}
+ggplot(df, aes(x = serum_creatinine, y = ejection_fraction, colour = DEATH_EVENT)) +
+  geom_point() +
+  geom_abline(intercept=0, slope=15, colour="grey25", linetype="dashed") +
+  scale_colour_manual(values = c(palette_ro[2], palette_ro[7]),
+                      name = "parient status\n(DEATH_EVENT)",
+                      labels = c("survived", "dead")) +
+  labs(title = "Scatterplot of serum_creatinine versus ejection_fraction") +
+  theme_minimal(base_size = 12)
+```
+
+> This plot shows a clear distinction between alive patients and dead patients, that we highlighted by manually inserting a black straight line.
+
+<font color="RoyalBlue">この図は、生存した患者と死亡した患者の明確な違いを示しており、手動で黒い直線を挿入して強調しています。</font>
+
+## Correlation matrix
+In this correlation matrix, correlation coefficients that have a significance level (p-value) below 0.05 are marked with a cross. 
+This is because if the p-value is higher than 0.05, then the parameter is considered not significant.<br>
+<font color="RoyalBlue">相関行列の中で、有意確率（p値）が 0.05 を下回るような値には×印を付けています。<br>
+なぜなら、p値が 0.05 を上回るようであれば、そのパラメータは有意ではないと判断されるからです。</font>
+
+```{r fig.cap="Fig. 11", fig.width = 12, fig.height=7.5}
+cor(df_n) %>%
+  corrplot(method = "color", type = "lower", tl.col = "black", tl.srt = 45,
+           addCoef.col = TRUE,
+           p.mat = cor.mtest(df_n)$p,
+           sig.level = 0.05)
+```
+
+For reference, in the figure below, p-values are shown instead of the correlation coefficients.<br>
+<font color="RoyalBlue">参考として、下図では、相関係数ではなくp値を表示しています。</font>
+
+```{r fig.cap="Fig. 12", fig.width = 12, fig.height=7.5}
+cor(df_n) %>%
+  corrplot(method = "color", type = "lower", tl.col = "black", tl.srt = 45,
+           p.mat = cor.mtest(df_n)$p,
+           insig = "p-value", sig.level = -1)
+```
+
+Insights:
+
+* The explanatory variables that can be said to be significantly correlated with the objective variable are, in order of increasing correlation, `time`, `serum_creatinine`, `ejection_fraction`, `age`, and `serum_creatinine`.
+<br>　<font color="RoyalBlue">目的変数に対して有意に相関があると言える説明変数は、相関が高い順に time, serum_creatinine, ejection_fraction, age, serum_creatinine の５つである。</font>
+* The correlation between explanatory variables is not very high.
+<br>　<font color="RoyalBlue">説明変数同士の相関はそれほど高くない。</font>
+
+# Data preprocessing
+The `initial_split()` function is used to split the train set and the test set. 
+You can split the dataset while keeping the ratio of the objective variable by specifying `DEATH_EVENT` as the argument `strata`.<br>
+<font color="RoyalBlue">initial_split() 関数で訓練用セットとテスト用セットを分割します。
+このとき、引数 strata に DEATH_EVENT を指定することで、目的変数の割合を保ったままデータセットを分割することができます。</font>
+
+All seed values are fixed at 0.<br>
+<font color="RoyalBlue">シード値は全て0で固定しています。</font>
+
+```{r class.source="fold-show"}
+set.seed(0)
+df_split <- initial_split(df, p = 0.8, strata = DEATH_EVENT)
+train <- training(df_split)
+test <- testing(df_split)
+head(train)
+
+set.seed(0)
+df_n_split <- initial_split(df_n, p = 0.8, strata = DEATH_EVENT)
+train_n <- training(df_n_split)
+test_n <- testing(df_n_split)
+head(train_n)
+```
+
+# Train models and make predictions
+Now, we are going to create some models and check the performance measures. In this notebook, we will look at their accuracy, recall, and confusion matrix.<br>
+<font color="RoyalBlue">では、いくつかのモデルを作成し、性能指標を確認していきましょう。このノートブックでは、正解率、再現率、そして混同行列を見ていきます。</font>
+
+## Logistic regression analysis
+Logistic regression analysis is a model used to predict and analyze the probability of occurrence of an event (in this case, `DEATH_EVENT == 1`). 
+By estimating the parameters (intercept and regression coefficients) using the maximum likelihood method, 
+it is possible to calculate the change in odds (the ratio of the probability that the event will happen to the probability that the event will not happen) 
+when the values of the explanatory variables change.<br>
+<font color="RoyalBlue">ロジスティック回帰分析は、ある事象（今回は DEATH_EVENT == 1）の発生確率を予測・分析するために用いられるモデルです。<br>
+最尤法によってパラメータ（切片や回帰係数）を推定することで、説明変数の値が変化したときのオッズ（その現象が起こる場合と起こらない場合の確率の比）の変化を求めることができます。
+</font>
+
+In logistic regression analysis, the coefficient of determination (which is based on the sum of squares of residuals) cannot be used as a evaluation criterion 
+because the parameters are estimated using the maximum likelihood method instead of the least squares method (which minimizes the sum of squares of residuals).
+Therefore, we calculate McFadden's pseudo coefficient of determination, which is based on the likelihood.<br>
+<font color="RoyalBlue">ロジスティック回帰分析では、パラメータの推定を最小二乗法（残差の二乗和を最小化させる）ではなく最尤法で行っているため、決定係数（残差の二乗和を基準とする）を評価の基準として使うことができません。<br>
+そこで、尤度を基準とするマクファデンの擬似決定係数（McFadden's pseudo-R2）を算出します。</font>
+
+```{r class.source="fold-show"}
+lr1 <- glm(DEATH_EVENT ~ .,
+           family=binomial(logit), data=train)
+tab_model(lr1, show.r2 = FALSE, transform = NULL,
+          digits = 3, digits.p = 4)
+PseudoR2(lr1)
+```
+
+Here, `p` represent the significance probability. 
+The lower the `p` value of the parameter, the more significant it is, and if the value is higher than 0.05, it is considered not significant. 
+We can see that there are many variables in this model that are not statistically significant.<br>
+<font color="RoyalBlue">ここで、p は有意確率を表しています。<br>
+パラメータの p の値が低いほど有意であり、値が 0.05 を上回るようであれば有意ではないと判断されます。<br>
+このモデルには、統計的に有意でない変数が多く含まれていることが分かります。</font>
+
+Therefore, we will use the stepwise method for variable selection. 
+In the stepwise method, the model is recreated many times while changing the selection of explanatory variables. 
+The model with a smaller AIC (Akaike Information Criterion; a measure of the balance between the simplicity of the model and the goodness of fit of the model) value is left as the better model.<br>
+<font color="RoyalBlue">そこで、ステップワイズ法による変数選択を行います。<br>
+ステップワイズ法では、説明変数の選択を変えながら何度もモデルを作り直していきます。<br>
+AIC（赤池情報量規準、モデルの複雑さとデータへの適合度とのバランスを見る指標）の値がより小さいモデルが、より良いモデルとして残されます。</font>
+
+```{r class.source="fold-show"}
+lr2 <- step(lr1)
+
+tab_model(lr2, show.r2 = FALSE, transform = NULL,
+          digits = 3, digits.p = 4)
+PseudoR2(lr2)
+```
+
+If we check McFadden's pseudo coefficient of determination, we can see that it has hardly decreased compared to before applying the stepwise method.<br>
+<font color="RoyalBlue">疑似決定係数を確認すると、ステップワイズ法を適用する前と比べてほとんど減っていないことが分かります。</font>
+
+Now, let's calculate the odds from the model. 
+It can be obtained from the estimated parameters (`Log-Odds`). 
+For example, if the value of `serum_creatinine` increases by 1, the odds of `DEATH_EVENT == 1` (dead) is e^0.676^ = about 1.966 times.<br>
+<font color="RoyalBlue">では、モデルからオッズを算出してみましょう。<br>
+推定されたパラメータ（Log-Odds）から求めることができます。<br>
+例えば serum_creatinine の値が１上がると、DEATH_EVENT == 1 となる（死亡する）オッズは e の 0.676 乗で約 1.966 倍となります。</font>
+
+```{r}
+odds <- c(round( exp(lr2$coefficients["age"]*10), digits=3 ),
+          round( exp(lr2$coefficients["ejection_fraction"]), digits=3 ),
+          round( exp(lr2$coefficients["serum_creatinine"]), digits=3 ),
+          round( exp(lr2$coefficients["serum_sodium"]), digits=3 ),
+          round( exp(lr2$coefficients["time"]*7), digits=3 ))
+
+# 年齢が10歳高い
+# 駆出率が1%高い
+# 血清クレアチニン値が1mg/dL高い
+# 血清ナトリウム値が1mg/dL高い
+# 経過観察時間が1週間長い
+
+data.frame(variables = names(odds), odds = odds) %>%
+  mutate(description = c("Odds ratio of death for age 10 years older",
+                         "Odds ratio of death if ejection fraction id 1% higher",
+                         "Odds ratio of death if serum creatinine level is 1 mg/dL higher",
+                         "Odds ratio of death if serum sodium level is 1 mg/dL higher",
+                         "Odds ratio of death with 1 week (7 days) longer follow-up time"))
+```
+
+We will use this model to predict the test data.<br>
+<font color="RoyalBlue">このモデルを用いて、テストデータの予測を行ってみます。</font>
+
+```{r}
+pred <- as.factor(predict(lr2, newdata=test, type="response") >= 0.5) %>%
+  fct_recode("0" = "FALSE", "1" = "TRUE")
+confusionMatrix(pred, test$DEATH_EVENT, positive = "1")
+
+acc_lr <- confusionMatrix(pred, test$DEATH_EVENT)$overall["Accuracy"]
+tpr_lr <- confusionMatrix(pred, test$DEATH_EVENT)$byClass["Specificity"]
+# The reason why we set the recall of this model as "Specificity" is because the default value of positive in the confusionMatrix() function is 0.
+```
+
+The prediction using this test data showed that accuracy was 81.36% and recall (`Sensitivity`) was 68.42%.<br>
+<font color="RoyalBlue">このテストデータを用いた予測では、正解率が 81.36%、再現率（Sensitivity）が 68.42% だということが分かりました。</font>
+
+## SVM (Support vector machine)
+SVM (Support vector machine) is a model that draw a boundary (or separation hyperplane) that clearly separates two or more classes for classification and other purposes. 
+We will actually train a support vector machine using training data, and visualize the learning algorithm with `plotLearnerPrediction()` function.<br>
+<font color="RoyalBlue">サポートベクトルマシンは、２つ以上のクラスを明確に分ける境界線（もしくは分離超平面）を引いて分類などを行うモデルです。<br>
+実際に訓練データを使ってサポートベクトルマシンを訓練し、plotLearnerPrediction() 関数で学習アルゴリズムを可視化してみましょう。</font>
+
+```{r warning=FALSE, message=FALSE, class.source="fold-show"}
+task_train <- makeClassifTask(data=train, target="DEATH_EVENT")
+task_test <- makeClassifTask(data=test, target="DEATH_EVENT")
+task_df <- makeClassifTask(data=df, target="DEATH_EVENT")
+
+set.seed(0)
+lrn_svm <- makeLearner("classif.svm", predict.type = "prob",
+                       par.vals = list(kernel="linear",
+                                       cost=0.1))
+svm <- train(lrn_svm, task_train)
+```
+```{r warning=FALSE, message=FALSE, fig.cap="Fig. 13", out.width="90%"}
+plotLearnerPrediction(lrn_svm, task_df, features = c("serum_creatinine", "ejection_fraction")) +
+  scale_fill_manual(values=c(palette_ro[2], palette_ro[7])) +
+  theme_minimal(base_size = 12)
+```
+
+As you can see in the figure above, for `serum_creatinine` and `ejection_fraction`, the boundaries are drawn at almost the same position as the 
+[scatterplot from the paper](https://bmcmedinformdecismak.biomedcentral.com/articles/10.1186/s12911-020-1023-5/figures/3).<br>
+<font color="RoyalBlue">上図のように、serum_creatinine と ejection_fraction においては、論文上の散布図とほぼ同じ位置に境界線が引かれているのが見て取れます。</font>
+
+We also make predictions with this model and calculate accuracy and recall.<br>
+<font color="RoyalBlue">このモデルでも予測を行い、正解率と再現率を算出します。</font>
+
+```{r}
+pred <- getPredictionResponse(predict(svm, task_test))
+confusionMatrix(pred, test$DEATH_EVENT, positive = "1")
+
+acc_svm <- confusionMatrix(pred, test$DEATH_EVENT)$overall["Accuracy"]
+tpr_svm <- confusionMatrix(pred, test$DEATH_EVENT)$byClass["Specificity"]
+```
+
+We can see that both accuracy and recall have increased compared to the logistic regression analysis.<br>
+<font color="RoyalBlue">ロジスティック回帰分析よりも正解率、再現率ともに上がっていることが分かります。</font>
+
+## Decision tree
+There are several types of decision tree algorithms.
+Here we will use CART (Classification and Regression Trees), which always splits a segment into two to create a binary tree.
+So, let's try to create a decision tree and try to make a prediction with that model.<br>
+<font color="RoyalBlue">決定木のアルゴリズムにはいくつかの種類があります。<br>
+ここでは、セグメントを常に２つに分割して二分木を作成する CART (Classification and Regression Trees) を用います。<br>
+早速決定木を作成し、そのモデルで予測を行ってみましょう。</font>
+
+```{r class.source="fold-show"}
+set.seed(0)
+cart <- rpart(DEATH_EVENT ~ .,
+              data = train, method = "class",
+              control=rpart.control(minsplit=10,
+                                    minbucket=5,
+                                    maxdepth=10,
+                                    cp=0.03))
+```
+
+```{r fig.cap="Fig. 14", out.width="90%", fig.height=8}
+prp(cart,
+    type = 4,
+    extra = 101,
+    nn = TRUE,
+    tweak = 1.0,
+    space = 0.1,
+    shadow.col = "grey",
+    col = "black",
+    split.col = palette_ro[5],
+    branch.col = palette_ro[4],
+    fallen.leaves = FALSE,
+    roundint = FALSE,
+    box.col = c(palette_ro[2], palette_ro[7])[cart$frame$yval])
+```
+
+```{r}
+pred <- as.factor(predict(cart, newdata=test)[, 2] >= 0.5) %>%
+  fct_recode("0" = "FALSE", "1" = "TRUE")
+confusionMatrix(pred, test$DEATH_EVENT, positive = "1")
+```
+
+When we look at this decision tree, we notice that features with high p-values, such as `platelets` and `high_blood_pressure`, are used in the decision to branch. 
+Let's narrow down the explanatory variables to only those that are statistically significant and recreate the decision tree.<br>
+<font color="RoyalBlue">この決定木を見ると、platelets や high_blood_pressure といったp値の高い特徴量が分岐の判断に使われているのが気になります。<br>
+説明変数を絞り、決定木をもう一度作り直してみましょう。</font>
+
+```{r class.source="fold-show"}
+set.seed(0)
+cart <- rpart(DEATH_EVENT ~ age + ejection_fraction + serum_creatinine + serum_sodium + time,
+              data = train, method = "class",
+              control=rpart.control(minsplit=20,
+                                    minbucket=10,
+                                    maxdepth=10,
+                                    cp=0.03))
+```
+
+```{r fig.cap="Fig. 15", out.width="90%", fig.height=8}
+prp(cart,
+    type = 4,
+    extra = 101,
+    nn = TRUE,
+    tweak = 1.0,
+    space = 0.1,
+    shadow.col = "grey",
+    col = "black",
+    split.col = palette_ro[5],
+    branch.col = palette_ro[4],
+    fallen.leaves = FALSE,
+    roundint = FALSE,
+    box.col = c(palette_ro[2], palette_ro[7])[cart$frame$yval])
+```
+
+```{r}
+pred <- as.factor(predict(cart, newdata=test)[, 2] >= 0.5) %>%
+  fct_recode("0" = "FALSE", "1" = "TRUE")
+confusionMatrix(pred, test$DEATH_EVENT, positive = "1")
+
+acc_cart <- confusionMatrix(pred, test$DEATH_EVENT)$overall["Accuracy"]
+tpr_cart <- confusionMatrix(pred, test$DEATH_EVENT)$byClass["Specificity"]
+```
+
+With such a simple model, we were able to increase accuracy to 91.53% and recall to 84.21%. 
+However, the figure shows that all patients whose follow-up period (`time`) is less than 74 days are considered to be dead, which seems to be difficult to use in practical terms.
+For reference, here is a decision tree without `time` as an explanatory variable.<br>
+<font color="RoyalBlue">このように単純なモデルで、正解率を 91.53%、再現率を 84.21% まで上げることができました。.<br>
+ただ、図をよく見ると、経過観察期間（time）が74日に満たない患者を全て死亡と判断してしまっているのは、実用面では使い辛そうに思えます。<br>
+参考までに、説明変数から time を抜いた場合の決定木を作成します。</font>
+
+```{r class.source="fold-show"}
+set.seed(0)
+cart <- rpart(DEATH_EVENT ~ age + ejection_fraction + serum_creatinine + serum_sodium,
+              data = train, method = "class",
+              control=rpart.control(minsplit=10,
+                                    minbucket=5,
+                                    maxdepth=10,
+                                    cp=0.01))
+```
+
+```{r fig.cap="Fig. 16", out.width="90%", fig.height=8}
+prp(cart,
+    type = 4,
+    extra = 101,
+    nn = TRUE,
+    tweak = 1.0,
+    space = 0.1,
+    shadow.col = "grey",
+    col = "black",
+    split.col = palette_ro[5],
+    branch.col = palette_ro[4],
+    fallen.leaves = FALSE,
+    roundint = FALSE,
+    box.col = c(palette_ro[2], palette_ro[7])[cart$frame$yval])
+```
+
+```{r}
+pred <- as.factor(predict(cart, newdata=test)[, 2] >= 0.5) %>%
+  fct_recode("0" = "FALSE", "1" = "TRUE")
+confusionMatrix(pred, test$DEATH_EVENT, positive = "1")
+```
+
+Although the model is a bit complicated, we were able to create a model with accuracy of 76.27%.<br>
+<font color="RoyalBlue">少々複雑なモデルになってしまいますが、正解率 76.27% のモデルを作成することができました。</font>
+
+## Random forest
+Random Forest is a model that samples and extracts test data, creates decision trees in parallel for each sample, and makes predictions based on the average or majority vote of these decision trees.
+As before, we will train the model and make predictions.<br>
+<font color="RoyalBlue">ランダムフォレストは、テストデータをサンプリングして抽出し、サンプルごとに並列に決定木を作成して、これらの決定木の平均や多数決によって予測を行うモデルです。<br>
+今までと同様に、モデルの訓練と予測を行います。</font>
+
+```{r class.source="fold-show"}
+set.seed(0)
+rf <- ranger(DEATH_EVENT ~.,
+             data = train,
+             mtry = 2, num.trees = 500, write.forest=TRUE, importance = "permutation")
+```
+
+```{r fig.cap="Fig. 17", out.width="90%"}
+data.frame(variables = names(importance(rf, method = "janitza")),
+           feature_importance = importance(rf, method = "janitza")) %>%
+  ggplot(aes(x = feature_importance,
+             y = reorder(variables, X = feature_importance))) +
+    geom_bar(stat = "identity",
+             fill = palette_ro[6],
+             alpha=0.9) +
+    labs(y = "features", title = "Feature importance of random forest") +
+    theme_minimal(base_size = 12)
+```
+
+```{r}
+pred <- predict(rf, data=test)$predictions
+confusionMatrix(pred, test$DEATH_EVENT, positive = "1")
+
+acc_rf <- confusionMatrix(pred, test$DEATH_EVENT)$overall["Accuracy"]
+tpr_rf <- confusionMatrix(pred, test$DEATH_EVENT)$byClass["Specificity"]
+```
+
+In this way, we were able to achieve high accuracy and high recall. 
+For reference, we will create a model using the same highly significant explanatory variables as in the decision tree, but without `time`.<br>
+<font color="RoyalBlue">このように、高い正解率と再現率を実現することができました。<br>
+参考までに、決定木と同様に有意性の高い説明変数から time を抜いたものを使ってモデルを作成してみます。</font>
+
+```{r class.source="fold-show"}
+set.seed(0)
+rf <- ranger(DEATH_EVENT ~ age + ejection_fraction + serum_creatinine,
+             data = train,
+             mtry = 3, num.trees = 100, write.forest=TRUE, importance = "permutation")
+```
+
+```{r fig.cap="Fig. 18", out.width="90%"}
+data.frame(variables = names(importance(rf, method = "janitza")),
+           feature_importance = importance(rf, method = "janitza")) %>%
+  ggplot(aes(x = feature_importance,
+             y = reorder(variables, X = feature_importance))) +
+    geom_bar(stat = "identity",
+             fill = palette_ro[6],
+             alpha=0.9) +
+    labs(y = "features", title = "Feature importance of random forest") +
+    theme_minimal(base_size = 12)
+```
+
+```{r}
+pred <- predict(rf, data=test)$predictions
+confusionMatrix(pred, test$DEATH_EVENT, positive = "1")
+```
+
+We were able to create a model with better prediction accuracy than the decision tree.<br>
+<font color="RoyalBlue">決定木よりも予測精度の良いモデルができました。</font>
+
+## GBDT (Gradient Boosting Decision Tree)
+GBDT (Gradient Boosting Decision Tree) is a model that learns to improve the difference between the target variable and the predictions made by previously created decision trees, 
+and sequentially adds more decision trees. 
+In this article, we will use a framework called LightGBM. 
+As before, we will train the model and make predictions.<br>
+<font color="RoyalBlue">GBDT（勾配ブースティング決定木）は、目的変数とそれまでに作成した決定木による予測値の差を改善するように学習し、逐次的に決定木を追加していくモデルです。<br>
+今回は LightGBM というフレームワークを扱います。<br>
+今までのように、モデルの訓練と予測を行っていきます。</font>
+
+```{r class.source="fold-show"}
+train_lgb <- lgb.Dataset(data = as.matrix(select(train_n, -DEATH_EVENT)), label = train_n$DEATH_EVENT)
+
+set.seed(0)
+lgb <- lightgbm(data = train_lgb, objective = "binary", verbosity = -1,
+                learning_rate = 0.1,
+                colsample_bytree = 0.8)
+```
+
+```{r fig.cap="Fig. 19", out.width="90%"}
+lgb.importance(lgb) %>%
+  ggplot(aes(x = Gain,
+             y = reorder(Feature, X = Gain))) +
+    geom_bar(stat = "identity",
+             fill = palette_ro[6],
+             alpha=0.9) +
+    labs(x ="feature_importance", y = "features", title = "Feature importance of LightGBM") +
+    theme_minimal(base_size = 12)
+```
+
+```{r}
+pred <- as.factor(predict(lgb, as.matrix(select(test_n, -DEATH_EVENT))) >= 0.5) %>%
+  fct_recode("0" = "FALSE", "1" = "TRUE")
+confusionMatrix(pred, as.factor(test_n$DEATH_EVENT), positive = "1")
+
+acc_lgb <- confusionMatrix(pred, as.factor(test_n$DEATH_EVENT))$overall["Accuracy"]
+tpr_lgb <- confusionMatrix(pred, as.factor(test_n$DEATH_EVENT))$byClass["Specificity"]
+```
+
+Although recall is lower than that of decision trees and random forests, the precision (`Specificity`) are higher. 
+After further evaluation with more test data, it would be good to use different methods depending on use cases, and so on.<br>
+<font color="RoyalBlue">再現率は決定木やランダムフォレストより低いものの、適合率は高くなっています。<br>
+テストデータをさらに増やして詳細な評価をした後に、ユースケースなどに応じて使い分けると良さそうです。</font>
+
+# Result
+```{r fig.cap="Fig. 20", out.width="90%"}
+data.frame(algorithm = c("logistic\nregression", "SVM", "decision\ntree", "random\nforest", "LightGBM"),
+           accuracy = c(acc_lr, acc_svm, acc_cart, acc_rf, acc_lgb)*100,
+           recall = c(tpr_lr, tpr_svm, tpr_cart, tpr_rf, tpr_lgb)*100) %>%
+  pivot_longer(col = -algorithm, names_to = "metrics", values_to = "percent") %>%
+  ggplot(aes(x = reorder(algorithm, X = percent),
+             y = percent,
+             fill = metrics)) +
+    geom_bar(stat = "identity",
+             position = "dodge",
+             alpha=0.9) +
+    geom_text(aes(group = metrics, label = str_c(sprintf("%2.1f", percent), "%")), 
+              position = position_dodge(width = 0.9), vjust = -0.2) +
+    scale_fill_manual(values = c(palette_ro[3], palette_ro[7])) +
+    labs(x = "algorithm", title = "Metrics of different classifier models") +
+    theme_minimal(base_size = 12)
+```
+
+Accuracy and recall of the model were these values, respectively. Thanks so much for reading!<br>
+<font color="RoyalBlue">モデルの正解率と再現率はそれぞれこのような値となりました。ここまで読んでくださりどうもありがとうございました！</font>
